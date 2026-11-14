@@ -1,0 +1,6 @@
+id=serenity-avf-enabler
+name=Serenity AVF enabler
+version=1.0
+versionCode=1
+author=Auroxion
+description=Enable AVF/Android Terminal on Serenity devices

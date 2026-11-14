@@ -1,0 +1,74 @@
+#!/sbin/sh
+# ============================================================
+# Serenity AVF enabler - installer (recovery / Magisk / KernelSU)
+# Author: Auroxion
+# ============================================================
+OUTFD="$2"
+ZIPFILE="$3"
+
+ui_print() {
+    if [ -n "$OUTFD" ] && [ -e "/proc/self/fd/$OUTFD" ]; then
+        echo "ui_print $1" > "/proc/self/fd/$OUTFD"
+        echo "ui_print" > "/proc/self/fd/$OUTFD"
+    fi
+}
+abort() {
+    ui_print "ERROR: $1"
+    exit 1
+}
+
+ui_print "Serenity AVF enabler v2.0 - Auroxion"
+if [ ! -d /data/adb ]; then
+    mount /data 2>/dev/null
+fi
+[ -d /data/adb ] || abort "/data/adb unavailable. Decrypt and mount /data in recovery."
+mkdir -p /data/adb/modules || abort "Cannot create module directory"
+
+STAGE="/data/adb/serenity-avf-stage.$$"
+DEST="/data/adb/modules/serenity-avf-enabler"
+BACKUP="/data/adb/serenity-avf-backup.$$"
+rm -rf "$STAGE" "$BACKUP"
+mkdir -p "$STAGE" || abort "Cannot create staging directory"
+
+if command -v unzip >/dev/null 2>&1; then
+    UNZIP="unzip"
+elif [ -x /sbin/busybox ]; then
+    UNZIP="/sbin/busybox unzip"
+elif [ -x /system/bin/unzip ]; then
+    UNZIP="/system/bin/unzip"
+else
+    abort "No unzip utility found"
+fi
+
+$UNZIP -o "$ZIPFILE" module.prop auto_mount customize.sh post-fs-data.sh \
+    service.sh common.sh system README.txt -d "$STAGE" >/dev/null 2>&1 || abort "Extraction failed"
+[ -f "$STAGE/module.prop" ] || abort "module.prop missing"
+[ -f "$STAGE/common.sh" ] || abort "common.sh missing"
+[ -f "$STAGE/system/etc/permissions/avf-feature.xml" ] || abort "Feature XML missing"
+chmod 0644 "$STAGE"/module.prop "$STAGE"/common.sh 2>/dev/null
+chmod 0755 "$STAGE"/customize.sh "$STAGE"/service.sh "$STAGE"/post-fs-data.sh 2>/dev/null
+chmod 0644 "$STAGE/system/etc/permissions/avf-feature.xml"
+chown 0:0 "$STAGE/system/etc/permissions/avf-feature.xml" 2>/dev/null
+
+if command -v chcon >/dev/null 2>&1; then
+    chcon u:object_r:system_file:s0 "$STAGE/system/etc/permissions/avf-feature.xml" 2>/dev/null
+elif [ -x /sbin/busybox ]; then
+    /sbin/busybox chcon u:object_r:system_file:s0 "$STAGE/system/etc/permissions/avf-feature.xml" 2>/dev/null
+fi
+
+# Run the full install logic (checks, volume confirm, DTBO, pm enable)
+MODPATH="$STAGE"
+. "$STAGE/common.sh" || abort "Failed to load install logic"
+avf_install || abort "Install procedure failed"
+
+if [ -d "$DEST" ]; then
+    mv "$DEST" "$BACKUP" || abort "Could not back up existing module"
+fi
+mv "$STAGE" "$DEST" || {
+    [ -d "$BACKUP" ] && mv "$BACKUP" "$DEST"
+    abort "Could not install module"
+}
+rm -rf "$BACKUP"
+
+ui_print "Installed to $DEST - Reboot Android."
+exit 0
